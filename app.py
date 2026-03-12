@@ -8,6 +8,7 @@ import html
 import streamlit.components.v1 as components
 import datetime
 import re
+import math
 
 # --- 設定 ---
 PAGE_TITLE = "YouTube Shorts 分析 ダッシュボード"
@@ -445,4 +446,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
