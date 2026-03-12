@@ -280,6 +280,9 @@ def main():
 
     tab_list, tab_sim = st.tabs(["📋 リスト・詳細レポート", "🧠 類似企画検索"])
 
+# --------------------------------------------------------------------------
+    # Tab 1: カード型リスト表示（ページネーション付き・Shorts特化レイアウト）
+    # --------------------------------------------------------------------------
     with tab_list:
         sc1, sc2 = st.columns([2, 1])
         s_key = sc1.selectbox("ソート基準", ["投稿日時 (新しい順)", "企画の強さ (Rel. Perf順)", "再生回数 (多い順)"])
@@ -289,38 +292,87 @@ def main():
         elif "再生" in s_key: sort_col = COL_VIEW
         else: sort_col = COL_PUBLISHED
         
-        display_df = display_filtered.sort_values(by=sort_col, ascending=s_asc)
-        display_df = display_df.set_index(COL_TITLE)
+        sorted_df = display_filtered.sort_values(by=sort_col, ascending=s_asc)
         
-        st.info("💡 リストの行を選択すると、下に詳細レポートが表示されます。（タイトル列は左固定）")
+        # --- ページネーション設定 ---
+        ITEMS_PER_PAGE = 50
+        total_items = len(sorted_df)
+        
+        if total_items > 0:
+            total_pages = math.ceil(total_items / ITEMS_PER_PAGE)
+            st.divider()
+            
+            # ページネーションコントロール（上部）
+            p_col1, p_col2 = st.columns([3, 1])
+            with p_col2:
+                current_page = st.number_input("ページ選択", min_value=1, max_value=total_pages, value=1, step=1)
+            
+            # データスライス
+            start_idx = (current_page - 1) * ITEMS_PER_PAGE
+            end_idx = start_idx + ITEMS_PER_PAGE
+            page_df = sorted_df.iloc[start_idx:end_idx]
+            
+            with p_col1:
+                display_start = start_idx + 1
+                display_end = min(end_idx, total_items)
+                st.info(f"全 {total_items} 件中、{display_start} ～ {display_end} 件目を表示しています（Page {current_page}/{total_pages}）")
+        else:
+            page_df = pd.DataFrame()
+            st.warning("表示するデータがありません。")
 
-        cols = [COL_THUMBNAIL, COL_PERF, COL_VIEW, COL_PUBLISHED, COL_CHANNEL]
-        if col_map['format']: cols.append(col_map['format'])
+        # --- カード表示ループ ---
+        for _, row in page_df.iterrows():
+            with st.container(border=True):
+                # ★Shorts用調整: 縦長サムネが大きくなりすぎないよう [1, 3] または [1, 4] の比率にする
+                col_img, col_info = st.columns([1, 3]) 
+                
+                with col_img:
+                    # サムネイル表示
+                    if row.get(COL_THUMBNAIL):
+                        st.image(row[COL_THUMBNAIL], use_container_width=True)
+                    else:
+                        st.text("No Image")
 
-        col_config = {
-            "_index": st.column_config.TextColumn("タイトル", width="large"),
-            COL_THUMBNAIL: st.column_config.ImageColumn("サムネ", width="small"),
-            COL_PERF: st.column_config.ProgressColumn("Perf", min_value=0, max_value=300, format="%d%%"),
-            COL_VIEW: st.column_config.NumberColumn("再生数", format="%d"),
-            COL_PUBLISHED: st.column_config.DateColumn("投稿日", format="YYYY-MM-DD"),
-        }
+                with col_info:
+                    # タイトル（リンク付き）
+                    st.markdown(f"#### [{row[COL_TITLE]}]({row[COL_URL]})")
+                    
+                    # メタ情報
+                    st.caption(f"📺 **{row[COL_CHANNEL]}** | 📅 {str(row[COL_PUBLISHED])[:10]}")
+                    
+                    # 数値指標
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Rel. Perf", f"{int(row[COL_PERF])}%")
+                    m2.metric("Views", f"{int(row[COL_VIEW]):,}")
+                    
+                    # スコア
+                    try: score = int(float(row.get(col_map['score'], 0)))
+                    except: score = 0
+                    stars = "★" * score + "☆" * (5 - score)
+                    m3.metric("Scalability", stars)
+                    
+                    # 企画フォーマット
+                    fmt = row.get(col_map['format'], '-')
+                    if fmt:
+                        st.markdown(f"**Format:** `{fmt}`")
+                        
+                    # タグ
+                    tags = str(row.get(col_map['tags'], '')).split(',')
+                    tags = [t.strip() for t in tags if t.strip()]
+                    if tags:
+                        tag_str = " ".join([f"`{t}`" for t in tags])
+                        st.markdown(f"**Tags:** {tag_str}")
 
-        # ★ 修正ポイント: 変数eventを初期化（エラー回避の決定打）
-        event = None
+                # 分析詳細（アコーディオン）
+                with st.expander("💡 分析・仮説を見る"):
+                    st.markdown("#### 成功要因仮説")
+                    st.info(row.get(col_map['hypo'], '記述なし'))
+                    
+                    st.markdown("#### 転用アイデア")
+                    st.success(row.get(col_map['idea'], '記述なし'))
 
-        # 表の表示: use_container_width を使用して安定化
-        try:
-            event = st.dataframe(
-                display_df[cols],
-                column_config=col_config,
-                use_container_width=True,
-                height=500,
-                on_select="rerun",
-                selection_mode="single-row"
-            )
-        except Exception:
-            # 万が一表の機能でエラーが出ても落ちずに表示だけする安全装置
-            st.dataframe(display_df[cols], use_container_width=True, height=500)
+        if total_items > ITEMS_PER_PAGE:
+            st.caption(f"現在のページ: {current_page} / {total_pages}")
 
         # -------------------------------------------------------------------
         # 【実績サマリ】
@@ -344,7 +396,6 @@ def main():
                 delta=f"{hit_count}本 / {total_count}本",
                 delta_color="off"
             )
-
         # 詳細レポート表示
         if event is not None and hasattr(event, "selection") and event.selection.rows:
             sel_idx = event.selection.rows[0]
@@ -394,3 +445,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
